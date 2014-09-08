@@ -1873,6 +1873,7 @@ const struct dpif_class dpif_linux_class = {
     dpif_linux_operate,
     dpif_linux_recv_set,
     dpif_linux_handlers_set,
+    NULL,                       /* poll_thread_set */
     dpif_linux_queue_to_priority,
     dpif_linux_recv,
     dpif_linux_recv_wait,
