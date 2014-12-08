@@ -40,6 +40,7 @@ static inline void list_splice(struct list *before, struct list *first,
 static inline void list_push_front(struct list *, struct list *);
 static inline void list_push_back(struct list *, struct list *);
 static inline void list_replace(struct list *, const struct list *);
+static inline void list_swap(struct list *, struct list *);
 static inline void list_moved(struct list *);
 static inline void list_move(struct list *dst, struct list *src);
 
@@ -51,6 +52,7 @@ static inline struct list *list_pop_back(struct list *);
 /* List elements. */
 static inline struct list *list_front(const struct list *);
 static inline struct list *list_back(const struct list *);
+static inline struct list *list_at_position(const struct list *, size_t n);
 
 /* List properties. */
 static inline size_t list_size(const struct list *);
@@ -156,6 +158,38 @@ list_replace(struct list *element, const struct list *position)
     element->prev->next = element;
 }
 
+/* Swaps the two adjacent list elements. 'ahead' must be ahead of 'after'. */
+static inline void
+list_swap_adjacent(struct list *ahead, struct list *after)
+{
+    ahead->next = after->next;
+    ahead->next->prev = ahead;
+    after->prev = ahead->prev;
+    ahead->prev->next = after;
+    ahead->prev = after;
+    after->next = ahead;
+}
+
+/* Swaps the position of 'elem1' and 'elem2'. */
+static inline void
+list_swap(struct list *element1, struct list *element2)
+{
+    if (element1 == element2) {
+        return;
+    } else if (element1->prev == element2) {
+        /* element2 is ahead of element1. */
+        list_swap_adjacent(element2, element1);
+    } else if (element2->prev == element1) {
+        /* element1 is ahead of element2. */
+        list_swap_adjacent(element1, element2);
+    } else {
+        const struct list tmp = *element1;
+
+        list_replace(element1, element2);
+        list_replace(element2, &tmp);
+    }
+}
+
 /* Adjusts pointers around 'list' to compensate for 'list' having been moved
  * around in memory (e.g. as a consequence of realloc()).
  *
@@ -236,6 +270,25 @@ list_back(const struct list *list_)
     ovs_assert(!list_is_empty(list));
 
     return list->prev;
+}
+
+/* Returns the element at position 'n', assume the first element is
+ * at index 0. */
+static inline struct list *
+list_at_position(const struct list *list_, size_t n)
+{
+    struct list *list = CONST_CAST(struct list *, list_);
+    struct list *ret;
+    size_t cnt = 0;
+
+    for (ret = list->next; ret != list; ret = ret->next) {
+        if (cnt++ == n) {
+            return ret;
+        }
+    }
+    ovs_assert(false);
+
+    return NULL;
 }
 
 /* Returns the number of elements in 'list'.
