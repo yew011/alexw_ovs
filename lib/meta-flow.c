@@ -2005,6 +2005,7 @@ mf_parse(const struct mf_field *mf, const char *s,
 char *
 mf_parse_value(const struct mf_field *mf, const char *s, union mf_value *value)
 {
+    bool override = false;
     union mf_value mask;
     char *error;
 
@@ -2013,7 +2014,7 @@ mf_parse_value(const struct mf_field *mf, const char *s, union mf_value *value)
         return error;
     }
 
-    if (!is_all_ones((const uint8_t *) &mask, mf->n_bytes)) {
+    if (!is_all_ones((const uint8_t *) &mask, mf->n_bytes) && override) {
         return xasprintf("%s: wildcards not allowed here", s);
     }
     return NULL;
