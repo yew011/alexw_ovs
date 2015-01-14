@@ -1105,6 +1105,264 @@ mf_set_flow_value(const struct mf_field *mf,
     }
 }
 
+/* Same operation as 'mf_set_flow_value', plus masking the field. */
+void
+mf_set_flow_value_hsa(const struct mf_field *mf,
+                      const union mf_value *value, struct flow *flow,
+                      struct flow_wildcards *wc)
+{
+    switch (mf->id) {
+    case MFF_DP_HASH:
+        flow->dp_hash = ntohl(value->be32);
+        WC_MASK_FIELD(wc, dp_hash);
+        break;
+    case MFF_RECIRC_ID:
+        flow->recirc_id = ntohl(value->be32);
+        WC_MASK_FIELD(wc, recirc_id);
+        break;
+    case MFF_CONJ_ID:
+        flow->conj_id = ntohl(value->be32);
+        ovs_assert(false);
+        break;
+    case MFF_TUN_ID:
+        flow->tunnel.tun_id = value->be64;
+        WC_MASK_FIELD(wc, tunnel.tun_id);
+        break;
+    case MFF_TUN_SRC:
+        flow->tunnel.ip_src = value->be32;
+        WC_MASK_FIELD(wc, tunnel.ip_src);
+        break;
+    case MFF_TUN_DST:
+        flow->tunnel.ip_dst = value->be32;
+        WC_MASK_FIELD(wc, tunnel.ip_dst);
+        break;
+    case MFF_TUN_FLAGS:
+        flow->tunnel.flags = ntohs(value->be16);
+        WC_MASK_FIELD(wc, tunnel.flags);
+        break;
+    case MFF_TUN_TOS:
+        flow->tunnel.ip_tos = value->u8;
+        WC_MASK_FIELD(wc, tunnel.ip_tos);
+        break;
+    case MFF_TUN_TTL:
+        flow->tunnel.ip_ttl = value->u8;
+        WC_MASK_FIELD(wc, tunnel.ip_ttl);
+        break;
+
+    case MFF_METADATA:
+        flow->metadata = value->be64;
+        WC_MASK_FIELD(wc, metadata);
+        break;
+
+    case MFF_IN_PORT:
+        flow->in_port.ofp_port = u16_to_ofp(ntohs(value->be16));
+        WC_MASK_FIELD(wc, in_port);
+        break;
+
+    case MFF_IN_PORT_OXM:
+        ofputil_port_from_ofp11(value->be32, &flow->in_port.ofp_port);
+        break;
+    case MFF_ACTSET_OUTPUT:
+        ofputil_port_from_ofp11(value->be32, &flow->actset_output);
+        WC_MASK_FIELD(wc, actset_output);
+        break;
+
+    case MFF_SKB_PRIORITY:
+        flow->skb_priority = ntohl(value->be32);
+        WC_MASK_FIELD(wc, skb_priority);
+        break;
+
+    case MFF_PKT_MARK:
+        flow->pkt_mark = ntohl(value->be32);
+        WC_MASK_FIELD(wc, pkt_mark);
+        break;
+
+    CASE_MFF_REGS:
+        flow->regs[mf->id - MFF_REG0] = ntohl(value->be32);
+        WC_MASK_FIELD(wc, regs[mf->id - MFF_REG0]);
+        break;
+
+    CASE_MFF_XREGS:
+        flow_set_xreg(flow, mf->id - MFF_XREG0, ntohll(value->be64));
+        ovs_assert(false);
+        break;
+
+    case MFF_ETH_SRC:
+        memcpy(flow->dl_src, value->mac, ETH_ADDR_LEN);
+        WC_MASK_FIELD(wc, dl_src);
+        break;
+
+    case MFF_ETH_DST:
+        memcpy(flow->dl_dst, value->mac, ETH_ADDR_LEN);
+        WC_MASK_FIELD(wc, dl_dst);
+        break;
+
+    case MFF_ETH_TYPE:
+        flow->dl_type = value->be16;
+        WC_MASK_FIELD(wc, dl_type);
+        break;
+
+    case MFF_VLAN_TCI:
+        flow->vlan_tci = value->be16;
+        WC_MASK_FIELD(wc, vlan_tci);
+        break;
+
+    case MFF_DL_VLAN:
+        flow_set_dl_vlan(flow, value->be16);
+        WC_MASK_FIELD(wc, vlan_tci);
+        break;
+    case MFF_VLAN_VID:
+        flow_set_vlan_vid(flow, value->be16);
+        WC_MASK_FIELD(wc, vlan_tci);
+        break;
+
+    case MFF_DL_VLAN_PCP:
+    case MFF_VLAN_PCP:
+        flow_set_vlan_pcp(flow, value->u8);
+        WC_MASK_FIELD(wc, vlan_tci);
+        break;
+
+    case MFF_MPLS_LABEL:
+        flow_set_mpls_label(flow, 0, value->be32);
+        ovs_assert(false);
+        break;
+
+    case MFF_MPLS_TC:
+        flow_set_mpls_tc(flow, 0, value->u8);
+        ovs_assert(false);
+        break;
+
+    case MFF_MPLS_BOS:
+        flow_set_mpls_bos(flow, 0, value->u8);
+        ovs_assert(false);
+        break;
+
+    case MFF_IPV4_SRC:
+        flow->nw_src = value->be32;
+        WC_MASK_FIELD(wc, nw_src);
+        break;
+
+    case MFF_IPV4_DST:
+        flow->nw_dst = value->be32;
+        WC_MASK_FIELD(wc, nw_dst);
+        break;
+
+    case MFF_IPV6_SRC:
+        flow->ipv6_src = value->ipv6;
+        break;
+
+    case MFF_IPV6_DST:
+        flow->ipv6_dst = value->ipv6;
+        ovs_assert(false);
+        break;
+
+    case MFF_IPV6_LABEL:
+        flow->ipv6_label = value->be32 & ~htonl(IPV6_LABEL_MASK);
+        ovs_assert(false);
+        break;
+
+    case MFF_IP_PROTO:
+        flow->nw_proto = value->u8;
+        WC_MASK_FIELD(wc, nw_proto);
+        break;
+
+    case MFF_IP_DSCP:
+        flow->nw_tos &= ~IP_DSCP_MASK;
+        flow->nw_tos |= value->u8 & IP_DSCP_MASK;
+        WC_MASK_FIELD(wc, nw_tos);
+        break;
+
+    case MFF_IP_DSCP_SHIFTED:
+        flow->nw_tos &= ~IP_DSCP_MASK;
+        flow->nw_tos |= value->u8 << 2;
+        WC_MASK_FIELD(wc, nw_tos);
+        break;
+
+    case MFF_IP_ECN:
+        flow->nw_tos &= ~IP_ECN_MASK;
+        flow->nw_tos |= value->u8 & IP_ECN_MASK;
+        WC_MASK_FIELD(wc, nw_tos);
+        break;
+
+    case MFF_IP_TTL:
+        flow->nw_ttl = value->u8;
+        WC_MASK_FIELD(wc, nw_ttl);
+        break;
+
+    case MFF_IP_FRAG:
+        flow->nw_frag = value->u8 & FLOW_NW_FRAG_MASK;
+        WC_MASK_FIELD(wc, nw_frag);
+        break;
+
+    case MFF_ARP_OP:
+        flow->nw_proto = ntohs(value->be16);
+        ovs_assert(false);
+        break;
+
+    case MFF_ARP_SPA:
+        flow->nw_src = value->be32;
+        ovs_assert(false);
+        break;
+
+    case MFF_ARP_TPA:
+        flow->nw_dst = value->be32;
+        ovs_assert(false);
+        break;
+
+    case MFF_ARP_SHA:
+    case MFF_ND_SLL:
+        memcpy(flow->arp_sha, value->mac, ETH_ADDR_LEN);
+        ovs_assert(false);
+        break;
+
+    case MFF_ARP_THA:
+    case MFF_ND_TLL:
+        memcpy(flow->arp_tha, value->mac, ETH_ADDR_LEN);
+        ovs_assert(false);
+        break;
+
+    case MFF_TCP_SRC:
+    case MFF_UDP_SRC:
+    case MFF_SCTP_SRC:
+        flow->tp_src = value->be16;
+        WC_MASK_FIELD(wc, tp_src);
+        break;
+
+    case MFF_TCP_DST:
+    case MFF_UDP_DST:
+    case MFF_SCTP_DST:
+        flow->tp_dst = value->be16;
+        WC_MASK_FIELD(wc, tp_dst);
+        break;
+
+    case MFF_TCP_FLAGS:
+        flow->tcp_flags = value->be16;
+        WC_MASK_FIELD(wc, tcp_flags);
+        break;
+
+    case MFF_ICMPV4_TYPE:
+    case MFF_ICMPV6_TYPE:
+        flow->tp_src = htons(value->u8);
+        ovs_assert(false);
+        break;
+
+    case MFF_ICMPV4_CODE:
+    case MFF_ICMPV6_CODE:
+        flow->tp_dst = htons(value->u8);
+        ovs_assert(false);
+        break;
+
+    case MFF_ND_TARGET:
+        flow->nd_target = value->ipv6;
+        ovs_assert(false);
+        break;
+
+    case MFF_N_IDS:
+    default:
+        OVS_NOT_REACHED();
+    }
+}
+
 /* Consider each of 'src', 'mask', and 'dst' as if they were arrays of 8*n
  * bits.  Then, for each 0 <= i < 8 * n such that mask[i] == 1, sets dst[i] =
  * src[i].  */

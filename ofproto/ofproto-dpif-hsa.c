@@ -73,6 +73,24 @@ struct hsa_list {
     struct ovs_list hs_list;        /* Contains 'hs's. */
 };
 
+/* meta-flow field for hsa */
+/* struct hsa_mf_pair {
+    field_in_hs;
+    field_in_flow;
+}; */
+
+/* Places to fix:
+ *
+ * 1. When move is executed, create mf_pair.
+ * 2. When field is loaded, delete mf_pair.
+ * 3. When the hs finds match, apply the rule through mf_pair.
+ * 4. When recording the constraints, consider the mf_pair.
+ *
+ *
+ * Change looping to recursion!
+ *
+ * */
+
 /* Representation of header space.
  *
  * Difference between match_hs and match_flow.
@@ -102,9 +120,6 @@ struct header_space {
 
     /* Contraints from previous matches. */
     struct hsa_constraint_list constraints;
-    /* Mask of the fields that has not been set by actions.
-     * So, 'constraints' will not contain such field. */
-    struct flow_wildcards valid_fields;
 };
 
 /* Global 'struct hsa_table's, one for each OpenFlow table. */
@@ -152,6 +167,11 @@ static bool hsa_hsbt_check_match(struct hsbt_list *, struct hsa_rule *);
 static void hsa_print_result(struct ds *, struct hsa_list *);
 
 
+#define HSBT_LEN (sizeof(struct flow) * 2)
+#define MINI_MAP_LEN (FLOW_U64S * 2)
+
+BUILD_ASSERT_DECL(HSBT_LEN < 2048);
+
 /* Byte arrays representation of header space.
  *
  * Encode each bit into two bits:
@@ -164,20 +184,34 @@ struct hsbt {
     struct ovs_list list_node;
     struct hmap_node hmap_node;
     char *hs_arr;               /* 'match' as byte array. */
-    size_t len;                 /* Length of each 'hs_arr'. */
     uint32_t hash;              /* hash_byte of 'hs_arr'. */
 };
 
-/* List of 'struct hsbt's.  This is used to represent to partitioned
- * header space by rule matching. */
+/* List of 'struct hsbt's.  This is used to represent
+ * to partitioned header space by rule matching. */
 struct hsbt_list {
     struct ovs_list list;      /* Contains 'struct hsbt's. */
 };
 
+/* Compressed version of 'struct hsbt'.  Each bit in the map represents
+ * 64 bits in the 'hsbt->hs_arr'.  A '1' bit indicates the 64-bit chunk
+ * is UINT64_MAX.  A '0' bit means the opposite and the actual value
+ * of the chunk will be represented by one element in 'values'. */
+struct mini_hsbt {
+    struct ovs_list list_node;
+    uint64_t map;
+    uint64_t *values;
+};
+
+/* List of 'struct mini_hsbt's. */
+struct mini_hsbt_list {
+    struct ovs_list list;      /* Contains 'struct mini_hsbt's. */
+};
+
 /* hsa byte array operations. */
 static void log_hsbt(struct hsbt *, char *name);
-static struct hsbt *hsbt_create(size_t len);
-static struct hsbt *hsbt_create_all_wildcarded(size_t len);
+static struct hsbt *hsbt_create(void);
+static struct hsbt *hsbt_create_all_wildcarded(void);
 static void hsbt_destroy(struct hsbt *);
 static void hsbt_calc_hash(struct hsbt *);
 static bool hsbt_check_duplicate(struct hmap *, struct hsbt *);
@@ -191,14 +225,34 @@ static struct hsbt_list *hsbt_complement(struct hsbt *);
 static struct hsbt *hsbt_intersect(struct hsbt *, struct hsbt *);
 static struct hsbt_list *hsbt_diff(struct hsbt *, struct hsbt *);
 
+static struct mini_hsbt *mini_hsbt_from_match(struct match *);
+static struct mini_hsbt *mini_hsbt_from_hsbt(struct hsbt *);
+static struct mini_hsbt *mini_hsbt_create_flap(size_t map_bit,
+                                               size_t value_bit);
+static struct hsbt *mini_hsbt_to_hsbt(struct mini_hsbt *);
+static void mini_hsbt_destroy(struct mini_hsbt *);
+static void mini_hsbt_insert_without_duplicate(struct mini_hsbt_list *,
+                                               struct mini_hsbt *,
+                                               bool in_list);
+static struct mini_hsbt_list *mini_hsbt_complement(struct mini_hsbt *);
+static struct mini_hsbt *mini_hsbt_intersect(struct mini_hsbt *,
+                                             struct mini_hsbt *);
+static struct mini_hsbt_list *mini_hsbt_diff(struct mini_hsbt *,
+                                             struct mini_hsbt *);
+static struct mini_hsbt_list *mini_hsbt_list_create(void);
+static void mini_hsbt_list_destroy(struct mini_hsbt_list *);
+static void mini_hsbt_list_move(struct mini_hsbt_list *,
+                                struct mini_hsbt_list *);
+static void mini_hsbt_list_apply_mini_hsbt(struct mini_hsbt_list *,
+                                           struct mini_hsbt *);
+
 /* Returns 'struct hsbt' with byte array of 'len' long. */
 static struct hsbt *
-hsbt_create(size_t len)
+hsbt_create(void)
 {
     struct hsbt *ret = xmalloc(sizeof *ret);
 
-    ret->hs_arr = xmalloc(len * sizeof *ret->hs_arr);
-    ret->len = len;
+    ret->hs_arr = xzalloc(HSBT_LEN);
     ret->hash = 0;
 
     return ret;
@@ -212,13 +266,13 @@ hsbt_destroy(struct hsbt *hsbt)
     free(hsbt);
 }
 
-/* Returns byte array of 'len' long, all wildcarded. */
+/* Returns byte array of 'HSBT_LEN' long, all wildcarded. */
 static struct hsbt *
-hsbt_create_all_wildcarded(size_t len)
+hsbt_create_all_wildcarded(void)
 {
-    struct hsbt *ret = hsbt_create(len);
+    struct hsbt *ret = hsbt_create();
 
-    memset(ret->hs_arr, 0xFF, len);
+    memset(ret->hs_arr, 0xFF, HSBT_LEN);
 
     return ret;
 }
@@ -236,7 +290,7 @@ hsbt_check_duplicate(struct hmap *hmap, struct hsbt *hsbt)
 
     HMAP_FOR_EACH_WITH_HASH (comp, hmap_node, hsbt->hash, hmap) {
         /* If finds a duplicate, return true. */
-        if (!memcmp(hsbt->hs_arr, comp->hs_arr, hsbt->len)) {
+        if (!memcmp(hsbt->hs_arr, comp->hs_arr, HSBT_LEN)) {
             return true;
         }
     }
@@ -249,7 +303,7 @@ hsbt_check_duplicate(struct hmap *hmap, struct hsbt *hsbt)
 static void
 hsbt_calc_hash(struct hsbt *hsbt)
 {
-    hsbt->hash = hash_bytes(hsbt->hs_arr, hsbt->len, 0);
+    hsbt->hash = hash_bytes(hsbt->hs_arr, HSBT_LEN, 0);
 }
 
 /* Creates and returns 'struct hsbt_list *'. */
@@ -321,7 +375,7 @@ log_hsbt(struct hsbt *hsbt, char *name)
     size_t i;
 
     ds_put_format(&out, "hsbt %s: ", name);
-    for (i = 0; i < hsbt->len / 2; i++) {
+    for (i = 0; i <  HSBT_LEN / 2; i++) {
         ds_put_format(&out, "%x ", (arr[i] & 0xffff));
     }
     VLOG_INFO("%s", ds_cstr(&out));
@@ -332,7 +386,7 @@ log_hsbt(struct hsbt *hsbt, char *name)
 static struct hsbt *
 match_to_hsbt(struct match *match)
 {
-    struct hsbt *hsbt = hsbt_create(2 * sizeof(struct flow));
+    struct hsbt *hsbt = hsbt_create();
     uint16_t *arr = (uint16_t *) hsbt->hs_arr;
     char *flow = (char *) &match->flow;
     char *wc = (char *) &match->wc;
@@ -367,13 +421,12 @@ match_from_hsbt(struct hsbt *hsbt, struct match *match)
     uint16_t *arr = (uint16_t *) hsbt->hs_arr;
     char *flow = (char *) &match->flow;
     char *wc = (char *) &match->wc;
-    size_t len = hsbt->len / 2;
     size_t i, j;
 
     memset(match, 0, sizeof *match);
 
     /* Restores byte by byte from 'hsbt'. */
-    for (i = 0; i < len; i++) {
+    for (i = 0; i < HSBT_LEN/2; i++) {
         uint16_t encode = arr[i];
 
         for (j = 0; j < 8; j++) {
@@ -408,7 +461,7 @@ hsbt_complement(struct hsbt *hsbt)
     struct hsbt_list *hsbt_list = hsbt_list_create();
     size_t i, j;
 
-    for (i = 0; i < hsbt->len; i++) {
+    for (i = 0; i < HSBT_LEN; i++) {
         char byte = hsbt->hs_arr[i];
 
         for (j = 0; j < 4; j++) {
@@ -416,10 +469,10 @@ hsbt_complement(struct hsbt *hsbt)
 
             /* If a non-wildcarded bit is found, finds the flip. */
             if (((byte >> 2*j) & 0x03) == 0x01) {
-                flip = hsbt_create_all_wildcarded(hsbt->len);
+                flip = hsbt_create_all_wildcarded();
                 flip->hs_arr[i] = ((0xfe << 2*j) & 0xff) | ((0xff >> (8 - 2*j)) & 0xff);
             } else if (((byte >> 2*j) & 0x03) == 0x02) {
-                flip = hsbt_create_all_wildcarded(hsbt->len);
+                flip = hsbt_create_all_wildcarded();
                 flip->hs_arr[i] = ((0xfd << 2*j) & 0xff) | ((0xff >> (8 - 2*j)) & 0xff);
             }
 
@@ -439,10 +492,10 @@ hsbt_complement(struct hsbt *hsbt)
 static struct hsbt *
 hsbt_intersect(struct hsbt *comp_1, struct hsbt *comp_2)
 {
-    struct hsbt *result = hsbt_create(comp_1->len);
+    struct hsbt *result = hsbt_create();
     size_t i;
 
-    for (i = 0; i < comp_1->len; i++) {
+    for (i = 0; i < HSBT_LEN; i++) {
         char *byte = &result->hs_arr[i];
 
         *byte = comp_1->hs_arr[i] & comp_2->hs_arr[i];
@@ -482,8 +535,299 @@ hsbt_diff(struct hsbt *comp_1, struct hsbt *comp_2)
 
     return result;
 }
-
 
+/* Creates and returns 'mini_hsbt' from 'match'. */
+static struct mini_hsbt *
+mini_hsbt_from_match(struct match *match)
+{
+    struct hsbt *hsbt = match_to_hsbt(match);
+
+    return mini_hsbt_from_hsbt(hsbt);
+}
+
+/* Creates and returns 'mini_hsbt' from 'hsbt'.
+ * This function owns 'hsbt' and will destroy 'hsbt'. */
+static struct mini_hsbt *
+mini_hsbt_from_hsbt(struct hsbt *hsbt)
+{
+    struct mini_hsbt *mini = xzalloc(sizeof *mini);
+    uint64_t *values = (uint64_t *) hsbt->hs_arr;
+    size_t sz = 0;
+    size_t i;
+
+    for (i = 0; i < MINI_MAP_LEN; i++) {
+        if (values[i] == UINT64_MAX) {
+            mini->map |= (uint64_t) 0x1 << i;
+        } else {
+            mini->values = xrealloc(mini->values, (++sz) * sizeof *mini->values);
+            mini->values[sz-1] = values[i];
+        }
+    }
+
+    hsbt_destroy(hsbt);
+
+    return mini;
+}
+
+/* Creates 'mini_hsbt' which only has 'one-zero-bit' in map. */
+static struct mini_hsbt *
+mini_hsbt_create_flap(size_t map_bit, size_t value_bit)
+{
+    struct mini_hsbt *mini = xzalloc(sizeof *mini);
+
+    mini->map = ~((uint64_t) 1 << map_bit);
+    mini->values = xmalloc(sizeof *mini->values);
+    /* Leaves a 'hole' in values for caller to set. */
+    mini->values[0] = UINT64_MAX & ~((uint64_t) 0x3 << 2*value_bit);
+
+    return mini;
+}
+
+/* Converts 'mini_hsbt' back to 'hsbt'. */
+static struct hsbt *
+mini_hsbt_to_hsbt(struct mini_hsbt *mini)
+{
+    struct hsbt *hsbt = hsbt_create();
+    uint64_t *values = (uint64_t *) hsbt->hs_arr;
+    size_t idx = 0;
+    size_t i;
+
+    for (i = 0; i < MINI_MAP_LEN; i++) {
+        if ((mini->map >> i) & 0x1) {
+            values[i] = UINT64_MAX;
+        } else {
+            values[i] = mini->values[idx++];
+        }
+    }
+
+    return hsbt;
+}
+
+/* Destroys 'mini_hsbt'. */
+static void
+mini_hsbt_destroy(struct mini_hsbt *mini)
+{
+    free(mini->values);
+    free(mini);
+}
+
+/* Inserts the 'mini' to 'mini_list' if there is no duplicate or
+ * superset already in 'mini_list'.  Sets 'in_list' to true if
+ * 'mini' is currently in another list. */
+static void
+mini_hsbt_insert_without_duplicate(struct mini_hsbt_list *mini_list,
+                                   struct mini_hsbt *mini,
+                                   bool in_list)
+{
+    struct mini_hsbt *comp;
+    size_t n_values = 0;
+    size_t i;
+
+    /* Get number of 'values'. */
+    for (i = 0; i < MINI_MAP_LEN; i++) {
+        if (((mini->map >> i) & 0x1) == 0) {
+            n_values++;
+        }
+    }
+
+    LIST_FOR_EACH (comp, list_node, &mini_list->list) {
+        uint64_t *vals_comp = comp->values;
+        uint64_t *vals_mini = mini->values;
+        bool is_dup = true;
+
+        /* If finds superset or equal, returns. */
+        for (i = 0; i < MINI_MAP_LEN; i++) {
+            uint8_t map_comp = comp->map >> i & 0x1;
+            uint8_t map_mini = mini->map >> i & 0x1;
+
+            if (map_comp == 1 && map_mini == 1) {
+                /* Do nothing. */
+            } else if (map_comp == 1 && map_mini == 0) {
+                vals_mini++;
+            } else if (map_comp == 0 && map_mini == 1) {
+                is_dup = false;
+                break;
+            } else {
+                if (*vals_mini++ & ~(*vals_comp++)) {
+                    is_dup = false;
+                    break;
+                }
+            }
+        }
+
+        if (is_dup) {
+            return;
+        }
+    }
+
+    /* If could not find duplicate, inserts 'mini' into 'mini_list'. */
+    if (in_list) {
+        list_remove(&mini->list_node);
+    }
+    list_insert(&mini_list->list, &mini->list_node);
+}
+
+/* Creates a 'mini_hsbt'. */
+static struct  mini_hsbt_list *
+mini_hsbt_list_create(void)
+{
+    struct mini_hsbt_list *mini_list = xmalloc(sizeof *mini_list);
+
+    list_init(&mini_list->list);
+
+    return mini_list;
+}
+
+/* Destroys the 'mini_list' and all its elements. */
+static void
+mini_hsbt_list_destroy(struct mini_hsbt_list *mini_list)
+{
+    struct mini_hsbt *iter, *next;
+
+    LIST_FOR_EACH_SAFE (iter, next, list_node, &mini_list->list) {
+        list_remove(&iter->list_node);
+        mini_hsbt_destroy(iter);
+    }
+    free(mini_list);
+}
+
+/* Moves the contents from 'src' to 'dst'. */
+static void
+mini_hsbt_list_move(struct mini_hsbt_list *dst, struct mini_hsbt_list *src)
+{
+    list_splice(&dst->list, list_front(&src->list), &src->list);
+}
+
+/* Given the 'mini', returns the complement of 'mini' as a list (union)
+ * 'mini's. */
+static struct mini_hsbt_list *
+mini_hsbt_complement(struct mini_hsbt *mini)
+{
+    struct mini_hsbt_list *mini_list = mini_hsbt_list_create();
+    uint64_t *values = mini->values;
+    size_t i;
+
+    for (i = 0; i < MINI_MAP_LEN; i++) {
+        uint8_t map_bit = mini->map >> i & 0x1;
+
+        if (map_bit == 0) {
+            size_t j;
+
+            for (j = 0; j < 32; j++) {
+                struct mini_hsbt *mini_flap = NULL;
+
+                /* If a non-wildcarded bit is found, creates a flap. */
+                if (((*values >> 2*j) & 0x3) == 0x01) {
+                    mini_flap = mini_hsbt_create_flap(i, j);
+                    mini_flap->values[0] |= (uint64_t) 0x2 << 2*j;
+                } else if (((*values >> 2*j) & 0x3) == 0x02) {
+                    mini_flap = mini_hsbt_create_flap(i, j);
+                    mini_flap->values[0] |= (uint64_t) 0x1 << 2*j;
+                }
+                if (mini_flap) {
+                    list_insert(&mini_list->list, &mini_flap->list_node);
+                }
+            }
+            /* Jumps to next value. */
+            values++;
+        }
+    }
+
+    return mini_list;
+}
+
+/* Given two 'mini_hsbt's, returns the intersection of them.
+ * Returns NULL when the intersection is empty. */
+static struct mini_hsbt *
+mini_hsbt_intersect(struct mini_hsbt *comp_1, struct mini_hsbt *comp_2)
+{
+    struct mini_hsbt *result = xmalloc(sizeof *result);
+    uint64_t *vals_1 = comp_1->values;
+    uint64_t *vals_2 = comp_2->values;
+    uint64_t *vals_result;
+    size_t n_vals = 0;
+    size_t i, j;
+
+    result->map = comp_1->map & comp_2->map;
+    for (i = 0; i < MINI_MAP_LEN; i++) {
+        if ((result->map >> i & 0x1) == 0) {
+            n_vals++;
+        }
+    }
+    vals_result = result->values = xmalloc(n_vals * sizeof *result->values);
+
+    for (i = 0; i < MINI_MAP_LEN; i++) {
+        uint8_t map_bit_1 = comp_1->map >> i & 0x1;
+        uint8_t map_bit_2 = comp_2->map >> i & 0x1;
+
+        if (map_bit_1 == 1 && map_bit_2 == 1) {
+            /* Do nothing. */
+        } else if (map_bit_1 == 1 && map_bit_2 == 0) {
+            *vals_result++ = *vals_2++;
+        } else if (map_bit_1 == 0 && map_bit_2 == 1) {
+            *vals_result++ = *vals_1++;
+        } else {
+            uint64_t val = *vals_1++ & *vals_2++;
+
+            for (j = 0; j < 32; j++) {
+                if (((val >> 2*j) & 0x3) == 0) {
+                    mini_hsbt_destroy(result);
+
+                    return NULL;
+                }
+            }
+            *vals_result++ = val;
+        }
+    }
+
+    return result;
+}
+
+/* Given two 'mini_hsbt's, calculates the diff and converts the result
+ * back to 'mini_hsbt'. */
+static struct mini_hsbt_list *
+mini_hsbt_diff(struct mini_hsbt *mini_1, struct mini_hsbt *mini_2)
+{
+    struct mini_hsbt_list *result = mini_hsbt_list_create();
+    struct mini_hsbt_list *complement;
+    struct mini_hsbt *iter;
+
+    complement = mini_hsbt_complement(mini_2);
+
+    LIST_FOR_EACH (iter, list_node, &complement->list) {
+        struct mini_hsbt *intersect = mini_hsbt_intersect(mini_1, iter);
+
+        if (intersect) {
+            list_insert(&result->list, &intersect->list_node);
+        }
+    }
+    mini_hsbt_list_destroy(complement);
+
+    return result;
+}
+
+/* Subtracts 'mini' from each element of 'mini_list'. */
+static void
+mini_hsbt_list_apply_mini_hsbt(struct mini_hsbt_list *mini_list,
+                               struct mini_hsbt *mini)
+{
+    struct mini_hsbt_list *old_mini_list = mini_hsbt_list_create();
+    struct mini_hsbt *iter;
+
+    mini_hsbt_list_move(old_mini_list, mini_list);
+
+    LIST_FOR_EACH (iter, list_node, &old_mini_list->list) {
+        struct mini_hsbt_list *diff = mini_hsbt_diff(iter, mini);
+        struct mini_hsbt *tmp, *next;
+
+        LIST_FOR_EACH_SAFE (tmp, next, list_node, &diff->list) {
+            mini_hsbt_insert_without_duplicate(mini_list, tmp, true);
+        }
+        mini_hsbt_list_destroy(diff);
+    }
+    mini_hsbt_list_destroy(old_mini_list);
+}
+
 static void
 hsa_match_print(struct ds *out, struct match *match)
 {
@@ -677,7 +1021,7 @@ hsa_hsbt_apply_match(struct hsbt_list *hsbt_list, struct hsa_rule *rule)
 }
 
 /* Appends the 'rule' as constraint to 'hs'.  Caution, only the
- * 'hs->valid_fields' of 'rule' are used. */
+ * 'valid' fields of 'rule' are used. */
 static void
 hsa_hs_apply_constraint(struct header_space *hs, struct hsa_rule *rule)
 {
@@ -686,12 +1030,15 @@ hsa_hs_apply_constraint(struct header_space *hs, struct hsa_rule *rule)
     c->match = rule->match;
 
     /* If the 'ATTR' in 'match_flow' and 'match_hs' are different,
-     * unmask the 'ATTR' in 'hs->valid_fields'.  This is to avoid
+     * unmask the 'ATTR' in 'c->match.wc'.  This is to avoid
      * adding 'ATTR's set by actions as constraint. */
 #define FLOW_ATTR(ATTR)                                                 \
-    if (!memcmp(&hs->match_flow.flow.ATTR, &hs->match_hs.flow.ATTR,     \
-                sizeof hs->match_flow.flow.ATTR)) {                     \
-        WC_UNMASK_FIELD(&hs->valid_fields, ATTR);                       \
+    if (memcmp(&hs->match_flow.flow.ATTR, &hs->match_hs.flow.ATTR,      \
+               sizeof hs->match_flow.flow.ATTR)                         \
+        || memcmp(&hs->match_flow.wc.masks.ATTR,                        \
+                  &hs->match_hs.wc.masks.ATTR,                          \
+                  sizeof hs->match_flow.wc.masks.ATTR)) {               \
+        WC_UNMASK_FIELD(&c->match.wc, ATTR);                            \
     }
     FLOW_ATTRS
 #undef FLOW_ATTR
@@ -946,12 +1293,50 @@ hsa_rule_apply_actions(struct header_space *input_hs, struct hsa_rule *rule,
                 hs_flow->tunnel.tun_id = htonll(ofpact_get_SET_TUNNEL(a)->tun_id);
                 break;
 
-            case OFPACT_REG_MOVE:
+            case OFPACT_REG_MOVE: {
                 /* Move function, */
-                nxm_execute_reg_move(ofpact_get_REG_MOVE(a), hs_flow, hs_wc);
+                const struct ofpact_reg_move *move = ofpact_get_REG_MOVE(a);
+                union mf_value src_value;
+                union mf_value dst_value;
+                union mf_value src_mask;
+                union mf_value dst_mask;
+
+                /* Saves the src/dst mac before they are exact-match'ed. */
+                mf_get_value(move->dst.field, &hs_wc->masks, &dst_mask);
+                mf_get_value(move->src.field, &hs_wc->masks, &src_mask);
+
+                mf_mask_field_and_prereqs(move->dst.field, &hs_wc->masks);
+                mf_mask_field_and_prereqs(move->src.field, &hs_wc->masks);
+
+                /* A flow may wildcard nw_frag.  Do nothing if setting a transport
+                 * header field on a packet that does not have them. */
+                if (mf_are_prereqs_ok(move->dst.field, hs_flow)
+                    && mf_are_prereqs_ok(move->src.field, hs_flow)) {
+
+                    mf_get_value(move->dst.field, hs_flow, &dst_value);
+                    mf_get_value(move->src.field, hs_flow, &src_value);
+                    bitwise_copy(&src_value, move->src.field->n_bytes, move->src.ofs,
+                                 &dst_value, move->dst.field->n_bytes, move->dst.ofs,
+                                 move->src.n_bits);
+                    mf_set_flow_value(move->dst.field, &dst_value, hs_flow);
+
+                    bitwise_copy(&src_mask, move->src.field->n_bytes, move->src.ofs,
+                                 &dst_mask, move->dst.field->n_bytes, move->dst.ofs,
+                                 move->src.n_bits);
+                    mf_set_flow_value(move->dst.field, &dst_value,
+                                      &hs_wc->masks);
+                }
+
+                /* Check if there is already a constraint on the field.  If so,
+                 * check overlap.  There should be no overlap! */
+
+                /* Move the wildcard from src -> dst. */
                 break;
+            }
 
             case OFPACT_SET_FIELD:
+                /* Load action, only support load of exact-match value. */
+
                 set_field = ofpact_get_SET_FIELD(a);
                 mf = set_field->field;
 
@@ -963,12 +1348,10 @@ hsa_rule_apply_actions(struct header_space *input_hs, struct hsa_rule *rule,
                         break;
                     }
                 }
-                /* A flow may wildcard nw_frag.  Do nothing if setting a trasport
-                 * header field on a packet that does not have them. */
                 mf_mask_field_and_prereqs(mf, &hs_wc->masks);
                 if (mf_are_prereqs_ok(mf, hs_flow)) {
-                    mf_set_flow_value_masked(mf, &set_field->value,
-                                             &set_field->mask, hs_flow);
+                    mf_set_flow_value_hsa(mf, &set_field->value, hs_flow,
+                                          hs_wc);
                 }
                 break;
 
@@ -1136,7 +1519,6 @@ hs_create(void)
     struct header_space *hs = xzalloc(sizeof *hs);
 
     hs->output = OFPP_NONE;
-    flow_wildcards_init_catchall(&hs->valid_fields);
     list_init(&hs->constraints.list);
 
     return hs;
@@ -1159,7 +1541,6 @@ hs_clone(const struct header_space *hs)
         copy->match = iter->match;
         list_insert(&clone->constraints.list, &copy->list_node);
     }
-    clone->valid_fields = hs->valid_fields;
 
     return clone;
 }
@@ -1195,6 +1576,7 @@ hsa_calculate(struct header_space *hs, uint8_t table_id, struct ds *out,
 
     /* Initializes the partition match. */
     list_insert(&hsbt_list->list, &hsbt_hs->list_node);
+    VLOG_INFO("indent: %d, table_id: %"PRIu8, indent, table_id);
     log_match(&hs->match_hs, "hsa_calculate");
 
     if (debug_enabled) {
@@ -1212,6 +1594,8 @@ hsa_calculate(struct header_space *hs, uint8_t table_id, struct ds *out,
             && hsa_hsbt_check_match(hsbt_list, rule)) {
             struct header_space *clone = hs_clone(hs);
             struct hsa_list *list;
+
+            log_rule(rule, "matched");
 
             /* Applies the flow fields. */
             hsa_rule_apply_match(clone, rule);
@@ -1248,41 +1632,58 @@ static void
 hsa_print_result(struct ds *out, struct hsa_list *result)
 {
     struct header_space *hs;
+    size_t idx = 1;
+
+    VLOG_INFO("number of entries: %"PRIuSIZE, list_size(&result->hs_list));
 
     ds_put_cstr(out, "\n\n\nOUTPUT\n======\n");
     ds_put_cstr(out, "Port No      Input Header Space\n");
     ds_put_cstr(out, "=======      ==================\n");
     LIST_FOR_EACH (hs, list_node, &result->hs_list) {
+        VLOG_INFO("processing entry: %"PRIuSIZE, idx++);
+        log_match(&hs->match_flow, "match_flow");
+
         if (list_is_empty(&hs->constraints.list)) {
+            VLOG_INFO("no constraints, output");
             ds_put_format(out, "%-16"PRIu16"   ", hs->output);
             hsa_match_print(out, &hs->match_flow);
         } else {
-            struct hsbt_list *hsbt_list = hsbt_list_create();
-            struct hsbt *hsbt_hs = match_to_hsbt(&hs->match_flow);
+            struct mini_hsbt *mini = mini_hsbt_from_match(&hs->match_flow);
+            struct mini_hsbt_list *mini_list = mini_hsbt_list_create();
             struct hsa_constraint *c;
-            struct hsbt *iter;
 
-            list_insert(&hsbt_list->list, &hsbt_hs->list_node);
+            list_insert(&mini_list->list, &mini->list_node);
 
+            VLOG_INFO("number constraints for entry: %"PRIuSIZE,
+                      list_size(&hs->constraints.list));
             LIST_FOR_EACH (c, list_node, &hs->constraints.list) {
-                struct hsbt *hsbt_c = match_to_hsbt(&c->match);
+                struct mini_hsbt *mini_c = mini_hsbt_from_match(&c->match);
 
-                hsbt_list_apply_hsbt(hsbt_list, hsbt_c);
-                hsbt_destroy(hsbt_c);
+                VLOG_INFO("before apply constraint, mini_list size; %"PRIuSIZE,
+                          list_size(&mini_list->list));
+                mini_hsbt_list_apply_mini_hsbt(mini_list, mini_c);
+                mini_hsbt_destroy(mini_c);
+                if (list_is_empty(&mini_list->list)) {
+                    break;
+                }
             }
 
-            ovs_assert(!list_is_empty(&hsbt_list->list));
+            if (!list_is_empty(&mini_list->list)) {
+                struct mini_hsbt *iter;
 
-            /* Restores the 'match' from 'hsbt'. */
-            LIST_FOR_EACH (iter, list_node, &hsbt_list->list) {
-                struct match output;
+                /* Restores the 'match' from 'mini'. */
+                LIST_FOR_EACH (iter, list_node, &mini_list->list) {
+                    struct hsbt *hsbt_o = mini_hsbt_to_hsbt(iter);
+                    struct match output;
 
-                match_from_hsbt(iter, &output);
-                ds_put_format(out, "%-16"PRIu16"   ", hs->output);
-                hsa_match_print(out, &output);
+                    match_from_hsbt(hsbt_o, &output);
+                    ds_put_format(out, "%-16"PRIu16"   ", hs->output);
+                    hsa_match_print(out, &output);
+                    hsbt_destroy(hsbt_o);
+                }
             }
 
-            hsbt_list_destroy(hsbt_list);
+            mini_hsbt_list_destroy(mini_list);
         }
     }
 }
