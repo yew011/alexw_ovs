@@ -20,6 +20,8 @@
 #include <stdint.h>
 
 /* For tracking connectivity changes globally. */
-struct seq *connectivity_seq_get(void);
+uint64_t connectivity_seq_read(void);
+void connectivity_seq_change(void);
+void connectivity_seq_wait(uint64_t value);
 
 #endif /* connectivity.h */

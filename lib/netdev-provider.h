@@ -64,7 +64,7 @@ static void
 netdev_change_seq_changed(const struct netdev *netdev_)
 {
     struct netdev *netdev = CONST_CAST(struct netdev *, netdev_);
-    seq_change(connectivity_seq_get());
+    connectivity_seq_change();
     netdev->change_seq++;
     if (!netdev->change_seq) {
         netdev->change_seq++;
@@ -187,11 +187,10 @@ struct netdev *netdev_rxq_get_netdev(const struct netdev_rxq *);
  * ==========================
  *
  * Minimally, implementations are required to report changes to netdev flags,
- * features, ethernet address or carrier through connectivity_seq. Changes to
- * other properties are allowed to cause notification through this interface,
- * although implementations should try to avoid this. connectivity_seq_get()
- * can be used to acquire a reference to the struct seq. The interface is
- * described in detail in seq.h. */
+ * features, ethernet address or carrier through connectivity_seq_*()
+ * interfaces.  Changes to other properties are allowed to cause notification
+ * through these interfaces, although implementations should try to avoid this.
+ * Please check connectivity.h for detailed description. */
 struct netdev_class {
     /* Type of netdevs in this class, e.g. "system", "tap", "gre", etc.
      *

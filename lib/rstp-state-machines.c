@@ -220,7 +220,7 @@ move_rstp__(struct rstp *rstp)
             }
         }
         num_iterations++;
-        seq_change(connectivity_seq_get());
+        connectivity_seq_change();
     }
     if (num_iterations >= MAX_RSTP_ITERATIONS) {
         VLOG_ERR("%s: move_rstp() reached the iteration safeguard limit!",
@@ -402,7 +402,7 @@ updt_roles_tree__(struct rstp *r)
             /* no break */
         }
     }
-    seq_change(connectivity_seq_get());
+    connectivity_seq_change();
 }
 
 static void

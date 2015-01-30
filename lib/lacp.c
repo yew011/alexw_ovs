@@ -528,7 +528,7 @@ lacp_run(struct lacp *lacp, lacp_send_pdu *send_pdu) OVS_EXCLUDED(mutex)
                 slave_set_defaulted(slave);
             }
             if (slave->status != old_status) {
-                seq_change(connectivity_seq_get());
+                connectivity_seq_change();
             }
         }
     }
@@ -561,7 +561,7 @@ lacp_run(struct lacp *lacp, lacp_send_pdu *send_pdu) OVS_EXCLUDED(mutex)
                         : LACP_SLOW_TIME_TX);
 
             timer_set_duration(&slave->tx, duration);
-            seq_change(connectivity_seq_get());
+            connectivity_seq_change();
         }
     }
     lacp_unlock();

@@ -598,7 +598,7 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
                 bridge_destroy(br);
             } else {
                 /* Trigger storing datapath version. */
-                seq_change(connectivity_seq_get());
+                connectivity_seq_change();
             }
         }
     }
@@ -2720,7 +2720,7 @@ run_status_update(void)
 
         /* Rate limit the update.  Do not start a new update if the
          * previous one is not done. */
-        seq = seq_read(connectivity_seq_get());
+        seq = connectivity_seq_read();
         if (seq != connectivity_seqno || status_txn_try_again) {
             struct bridge *br;
 
@@ -2787,7 +2787,7 @@ status_update_wait(void)
     } else if (status_txn_try_again) {
         poll_timer_wait_until(time_msec() + STATUS_CHECK_AGAIN_MSEC);
     } else {
-        seq_wait(connectivity_seq_get(), connectivity_seqno);
+        connectivity_seq_wait(connectivity_seqno);
     }
 }
 

@@ -1130,7 +1130,7 @@ rstp_port_set_state__(struct rstp_port *p, enum rstp_state state)
 
     if (state != p->rstp_state && !p->state_changed) {
         p->state_changed = true;
-        seq_change(connectivity_seq_get());
+        connectivity_seq_change();
     }
     p->rstp_state = state;
 }

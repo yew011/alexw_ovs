@@ -15,22 +15,21 @@
  */
 
 #include <config.h>
+
 #include "connectivity.h"
 #include "ovs-thread.h"
 #include "seq.h"
 
-static struct seq *connectivity_seq;
-
 /* Provides a global seq for connectivity changes.
  *
- * Connectivity monitoring modules should call seq_change() on the returned
- * object whenever the status of a port changes, whether the cause is local or
- * remote.
- *
- * Clients can seq_wait() on this object for changes to netdev flags, features,
- * ethernet addresses, carrier changes, and bfd/cfm/lacp/stp status. */
-struct seq *
-connectivity_seq_get(void)
+ * Connectivity monitoring modules should use the public functions in this
+ * module to report, check or wait on link/port status change.
+ * */
+static struct seq *connectivity_seq;
+
+/* Runs only once to initialize 'connectivity_seq'. */
+static void
+connectivity_seq_init(void)
 {
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
 
@@ -38,6 +37,30 @@ connectivity_seq_get(void)
         connectivity_seq = seq_create();
         ovsthread_once_done(&once);
     }
+}
+
+/* Reads and returns the current 'connectivity_seq' value. */
+uint64_t
+connectivity_seq_read(void)
+{
+    connectivity_seq_init();
 
-    return connectivity_seq;
+    return seq_read(connectivity_seq);
+}
+
+/* Changes the 'connectivity_seq'. */
+void
+connectivity_seq_change(void)
+{
+    connectivity_seq_init();
+    seq_change(connectivity_seq);
+}
+
+/* Wakes the caller up when 'connectivity_seq''s sequence number
+ * changes from 'value'.  */
+void
+connectivity_seq_wait(uint64_t value)
+{
+    connectivity_seq_init();
+    seq_wait(connectivity_seq, value);
 }

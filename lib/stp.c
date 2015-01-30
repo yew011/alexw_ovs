@@ -1158,7 +1158,7 @@ stp_configuration_update(struct stp *stp) OVS_REQUIRES(mutex)
 {
     stp_root_selection(stp);
     stp_designated_port_selection(stp);
-    seq_change(connectivity_seq_get());
+    connectivity_seq_change();
 }
 
 static bool
@@ -1289,7 +1289,7 @@ stp_set_port_state(struct stp_port *p, enum stp_state state)
         if (p < p->stp->first_changed_port) {
             p->stp->first_changed_port = p;
         }
-        seq_change(connectivity_seq_get());
+        connectivity_seq_change();
     }
     p->state = state;
 }
@@ -1308,7 +1308,7 @@ stp_topology_change_detection(struct stp *stp) OVS_REQUIRES(mutex)
     }
     stp->fdb_needs_flush = true;
     stp->topology_change_detected = true;
-    seq_change(connectivity_seq_get());
+    connectivity_seq_change();
     VLOG_INFO_RL(&rl, "%s: detected topology change.", stp->name);
 }
 

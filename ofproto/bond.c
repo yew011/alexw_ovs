@@ -493,7 +493,7 @@ bond_active_slave_changed(struct bond *bond)
     netdev_get_etheraddr(bond->active_slave->netdev, mac);
     memcpy(bond->active_slave_mac, mac, sizeof bond->active_slave_mac);
     bond->active_slave_changed = true;
-    seq_change(connectivity_seq_get());
+    connectivity_seq_change();
 }
 
 static void
@@ -639,7 +639,7 @@ bond_run(struct bond *bond, enum lacp_status lacp_status)
     /* Enable slaves based on link status and LACP feedback. */
     HMAP_FOR_EACH (slave, hmap_node, &bond->slaves) {
         bond_link_status_update(slave);
-        slave->change_seq = seq_read(connectivity_seq_get());
+        slave->change_seq = connectivity_seq_read();
     }
     if (!bond->active_slave || !bond->active_slave->enabled) {
         bond_choose_active_slave(bond);
@@ -664,7 +664,7 @@ bond_wait(struct bond *bond)
             poll_timer_wait_until(slave->delay_expires);
         }
 
-        seq_wait(connectivity_seq_get(), slave->change_seq);
+        connectivity_seq_wait(slave->change_seq);
     }
 
     if (bond->bond_revalidate) {

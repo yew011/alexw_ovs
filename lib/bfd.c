@@ -1198,7 +1198,7 @@ bfd_decay_update(struct bfd * bfd) OVS_REQUIRES(mutex)
 static void
 bfd_status_changed(struct bfd *bfd) OVS_REQUIRES(mutex)
 {
-    seq_change(connectivity_seq_get());
+    connectivity_seq_change();
     bfd->status_changed = true;
 }
 

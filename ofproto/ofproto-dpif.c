@@ -1531,7 +1531,7 @@ run(struct ofproto *ofproto_)
         dpif_ipfix_run(ofproto->ipfix);
     }
 
-    new_seq = seq_read(connectivity_seq_get());
+    new_seq = connectivity_seq_read();
     if (ofproto->change_seq != new_seq) {
         struct ofport_dpif *ofport;
 

@@ -338,7 +338,7 @@ cfm_init(void)
 static void
 cfm_status_changed(struct cfm *cfm) OVS_REQUIRES(mutex)
 {
-    seq_change(connectivity_seq_get());
+    connectivity_seq_change();
     cfm->status_changed = true;
 }
 

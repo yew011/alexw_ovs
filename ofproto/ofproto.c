@@ -1596,7 +1596,7 @@ ofproto_run(struct ofproto *p)
         }
     }
 
-    new_seq = seq_read(connectivity_seq_get());
+    new_seq = connectivity_seq_read();
     if (new_seq != p->change_seq) {
         struct sset devnames;
         const char *devname;
@@ -1638,7 +1638,7 @@ ofproto_wait(struct ofproto *p)
     if (p->ofproto_class->port_poll_wait) {
         p->ofproto_class->port_poll_wait(p);
     }
-    seq_wait(connectivity_seq_get(), p->change_seq);
+    connectivity_seq_wait(p->change_seq);
     connmgr_wait(p->connmgr);
 }
 
