@@ -18,10 +18,13 @@
 
 #include "backtrace.h"
 #include "connectivity.h"
+#include "coverage.h"
 #include "ovs-atomic.h"
 #include "ovs-thread.h"
 #include "seq.h"
 #include "unixctl.h"
+
+COVERAGE_DEFINE(conn_seq_change);
 
 /* Provides a global seq for connectivity changes.
  *
@@ -92,6 +95,7 @@ connectivity_seq_change(void)
 
     connectivity_seq_init();
 
+    COVERAGE_INC(conn_seq_change);
     atomic_read(&log_source, &log_enabled);
     if (log_enabled) {
         log_call_stack();
