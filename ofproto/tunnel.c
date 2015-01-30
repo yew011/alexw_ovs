@@ -19,6 +19,7 @@
 
 #include "byte-order.h"
 #include "connectivity.h"
+#include "coverage.h"
 #include "csum.h"
 #include "dpif.h"
 #include "dynamic-string.h"
@@ -41,6 +42,8 @@
 #include "ofproto-dpif.h"
 
 VLOG_DEFINE_THIS_MODULE(tunnel);
+
+COVERAGE_DEFINE(tnl_reconfig);
 
 /* skb mark used for IPsec tunnel packets */
 #define IPSEC_MARK 1
@@ -234,6 +237,7 @@ tnl_port_reconfigure(const struct ofport_dpif *ofport,
                || tnl_port->match.odp_port != odp_port
                || tnl_port->change_seq != netdev_get_change_seq(tnl_port->netdev)) {
         VLOG_DBG("reconfiguring %s", tnl_port_get_name(tnl_port));
+        COVERAGE_INC(tnl_reconfig);
         tnl_port_del__(ofport);
         tnl_port_add__(ofport, netdev, odp_port, true, native_tnl, name);
         changed = true;
