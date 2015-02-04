@@ -5,6 +5,8 @@
 
 struct dpif_packet;
 
+#define NON_PMD_CORE_ID 0
+
 #ifdef DPDK_NETDEV
 
 #include <rte_config.h>
