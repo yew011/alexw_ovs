@@ -44,6 +44,8 @@ _ovs_vsctl_check_startswith_string () {
     awk 'index($0, thearg)==1' thearg="$1"
 }
 
+# $1 = word to complete on.
+# Complete on global options.
 _ovs_vsctl_bashcomp_globalopt () {
     local options result
     options=""
@@ -55,6 +57,8 @@ _ovs_vsctl_bashcomp_globalopt () {
     printf -- "${options}\nEO\n${result}"
 }
 
+# $1 = word to complete on.
+# Complete on local options.
 _ovs_vsctl_bashcomp_localopt () {
     local options result possible_opts
 
@@ -81,6 +85,9 @@ _ovs_vsctl_bashcomp_localopt () {
     printf -- "${options}\nEO\n${result}"
 }
 
+# $1 = given local options.
+# $2 = word to complete on.
+# Complete on command that could contain the given local options.
 _ovs_vsctl_bashcomp_command () {
     local result possible_cmds
 
@@ -95,6 +102,8 @@ _ovs_vsctl_bashcomp_command () {
     printf -- "${result}"
 }
 
+# $1 = completion result to check.
+# Return 0 if the completion result is non-empty, otherwise return 1.
 _ovs_vsctl_detect_nonzero_completions () {
     local tmp newarg
 
@@ -106,6 +115,8 @@ _ovs_vsctl_detect_nonzero_completions () {
     return 0
 }
 
+# $1 = argument format to expand.
+# Expand '+ARGUMENT' in argument format to '!ARGUMENT *ARGUMENT'.
 _ovs_vsctl_expand_command () {
     result=$(printf "%s\n" "${_OVS_VSCTL_COMMANDS}" \
              | grep -- ",$1," | cut -f3 -d',' | tr ' ' '\n' \
@@ -115,6 +126,8 @@ _ovs_vsctl_expand_command () {
     printf -- "${result}\n!--"
 }
 
+# $1 = word to complete on.
+# Complete on table.
 _ovs_vsctl_complete_table () {
     local result
 
@@ -123,6 +136,8 @@ _ovs_vsctl_complete_table () {
     printf -- "EO\n%s\n" "${result}"
 }
 
+# $1 = word to complete on.
+# Complete on record.
 _ovs_vsctl_complete_record () {
     local table uuids names
 
@@ -139,6 +154,8 @@ _ovs_vsctl_complete_record () {
     printf -- "EO\n%s\n%s\n" "${uuids}" "${names}"
 }
 
+# $1 = word to complete on.
+# Complete on bridge.
 _ovs_vsctl_complete_bridge () {
     local result
 
@@ -146,6 +163,8 @@ _ovs_vsctl_complete_bridge () {
     printf -- "EO\n%s\n" "${result}"
 }
 
+# $1 = word to complete on.
+# Complete on port.
 _ovs_vsctl_complete_port () {
     local ports result
 
@@ -167,6 +186,7 @@ _ovs_vsctl_complete_port () {
 # $2:  Table to complete the key in
 # $3:  Column to find keys in
 # $4:  Prefix for each completion
+# Complete on key based on given table and column info.
 _ovs_vsctl_complete_key_given_table_column () {
     local keys
 
@@ -209,6 +229,8 @@ _ovs_vsctl_complete_key_value () {
     printf -- "NOSPACE\nEO\n%s" "${new_completions}"
 }
 
+# $1 = word to complete on.
+# Complete on column.
 _ovs_vsctl_complete_column () {
     local columns result
 
@@ -220,6 +242,7 @@ _ovs_vsctl_complete_column () {
     printf -- "EO\n%s\n" "${result}"
 }
 
+# Extract all system interfaces.
 _ovs_vsctl_get_sys_intf () {
     local result
     case "$(uname -o)" in
@@ -234,13 +257,17 @@ _ovs_vsctl_get_sys_intf () {
     printf "%s\n" "${result}"
 }
 
+# $1 = word to complete on.
+# Complete on system interface.
 _ovs_vsctl_complete_sysiface () {
     local result
 
-    result=$(_ovs_vsctl_get_sys_intf | _ovs_vsctl_check_startswith_string "$2")
+    result=$(_ovs_vsctl_get_sys_intf | _ovs_vsctl_check_startswith_string "$1")
     printf -- "EO\n%s\n" "${result}"
 }
 
+# $1 = word to complete on.
+# Complete on interface.
 _ovs_vsctl_complete_iface () {
     local bridges result
     bridges=$(_ovs_vsctl list-br)
@@ -257,7 +284,6 @@ _ovs_vsctl_complete_column_optkey_value () {
 
     column=$(printf "%s\n" "$1" | cut -d '=' -f1 | cut -d':' -f1)
     key=$(printf "%s\n" "$1" | cut -d '=' -f1 | cut -s -d':' -f2)
-    #    table=$(_ovs_vsctl_get_current_table)
     # The tr -d '\n' <<< makes sure that there are no leading or
     # trailing accidental newlines.
     table=$(tr -d '\n' <<< ${_OVS_VSCTL_PARSED_ARGS["TABLE"]})
@@ -288,6 +314,8 @@ _ovs_vsctl_complete_column_optkey_value () {
     printf -- "NOSPACE\nEO\n%s\n" "${result}"
 }
 
+# $1 = word to complete on.
+# Complete on filename.
 _ovs_vsctl_complete_filename () {
     local result
 
@@ -299,6 +327,8 @@ _ovs_vsctl_complete_bridge_fail_mode () {
     printf -- "EO\nstandalone\nsecure"
 }
 
+# $1 = word to complete on.
+# Complete on target.
 _ovs_vsctl_complete_target () {
     local result
 
@@ -316,6 +346,7 @@ _ovs_vsctl_complete_target () {
     fi
 }
 
+# Extract PS1 prompt.
 _ovs_vsctl_get_PS1 () {
 
     # Original inspiration from
@@ -337,16 +368,12 @@ _ovs_vsctl_get_PS1 () {
 
 }
 
+# Request a new value from user.  Nothing to complete on.
 _ovs_vsctl_complete_new () {
     local two_word_type message result
 
     two_word_type="${2/-/ }"
     message="\nEnter a ${two_word_type,,}:\n$(_ovs_vsctl_get_PS1)$COMP_LINE"
-    if [ -n "$1" ]; then
-        result="$1"
-    else
-        result="x"
-    fi
     printf -- "NOCOMP\nBM%sEM\nEO\n%s\n" "${message}" "${result}"
 }
 
@@ -536,6 +563,8 @@ _ovs_vsctl_process_messages () {
 _ovs_vsctl_bashcomp () {
     local cur valid_globals cmd_args raw_cmd cmd_pos valid_globals valid_opts
     local test="false"
+
+    # Prepare the COMP_* variables based on input.
     if [ "$1" = "test" ]; then
         test="true"
         export COMP_LINE="ovs-vsctl $2"
@@ -553,16 +582,15 @@ _ovs_vsctl_bashcomp () {
         export TERM="dumb"
     fi
 
+    # Extract the conf.db path.
     db=$(sed -n 's/.*--db=\([^ ]*\).*/\1/p' <<< "$COMP_LINE")
     if [ -n "$db" ]; then
         _OVS_VSCTL_INVOCATION_OPTS="--db=$db"
     fi
 
+    # If having trouble accessing the database, return.
     if ! _ovs_vsctl get-manager 2>/dev/null; then
-        _OVS_VSCTL_INVOCATION_OPTS=""
-        if ! _ovs_vsctl get-manager 2>/dev/null; then
-            return 1;
-        fi
+        return 1;
     fi
 
     _OVS_VSCTL_PARSED_ARGS=()
@@ -586,7 +614,7 @@ _ovs_vsctl_bashcomp () {
             _ovs_vsctl_detect_nospace $tmp
             # Remove all options
             tmp_nospace="${tmp#*EO}"
-            #tmp_nospace=$(sed -e 's/^\([^E]\|E[^O]\)*EO//' <<< "$tmp")
+
             # Allow commands to specify that they should not be
             # completed
             if ! [[ $tmp =~ ^([^E]|E[^O])*NOCOMP ]]; then
