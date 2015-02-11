@@ -1,4 +1,4 @@
-AT_BANNER([command completion unit tests - bash])
+AT_BANNER([appctl bashcomp unit tests])
 
 m4_define([GET_FORMAT], [
 echo "$@" | grep -A 1 -- "Command format" | tail -n+2
@@ -18,7 +18,7 @@ echo "available completions for keyword \"$1\": $2" \
      | sed -e 's/[ ]*$//g'
 ])
 
-AT_SETUP([bash completion - basic verification])
+AT_SETUP([appctl-bashcomp - basic verification])
 AT_SKIP_IF([test -z ${BASH_VERSION+x}])
 OVS_VSWITCHD_START
 
@@ -85,7 +85,7 @@ AT_CLEANUP
 # complex completion check - bfd/set-forwarding
 # bfd/set-forwarding [interface] normal|false|true
 # test expansion of 'interface'
-AT_SETUP([bash completion - complex completion check 1])
+AT_SETUP([appctl-bashcomp - complex completion check 1])
 AT_SKIP_IF([test -z ${BASH_VERSION+x}])
 OVS_VSWITCHD_START(add-port br0 p0 -- set Interface p0 type=dummy)
 
@@ -139,7 +139,7 @@ AT_CLEANUP
 # complex completion check - lacp/show
 # lacp/show [port]
 # test expansion on 'port'
-AT_SETUP([bash completion - complex completion check 2])
+AT_SETUP([appctl-bashcomp - complex completion check 2])
 AT_SKIP_IF([test -z ${BASH_VERSION+x}])
 OVS_VSWITCHD_START(add-port br0 p0 -- set Interface p0 type=dummy \
                    -- add-port br0 p1 -- set Interface p1 type=dummy)
@@ -173,7 +173,7 @@ AT_CLEANUP
 # complex completion check - ofproto/trace
 # ofproto/trace {[dp_name] odp_flow | bridge br_flow} [-generate|packet]
 # test expansion on 'dp|dp_name' and 'bridge'
-AT_SETUP([bash completion - complex completion check 3])
+AT_SETUP([appctl-bashcomp - complex completion check 3])
 AT_SKIP_IF([test -z ${BASH_VERSION+x}])
 OVS_VSWITCHD_START(add-port br0 p0 -- set Interface p0 type=dummy \
                    -- add-port br0 p1 -- set Interface p1 type=dummy)
@@ -260,7 +260,7 @@ AT_CLEANUP
 # complex completion check - vlog/set
 # vlog/set {spec | PATTERN:destination:pattern}
 # test non expandable arguments
-AT_SETUP([bash completion - complex completion check 4])
+AT_SETUP([appctl-bashcomp - complex completion check 4])
 AT_SKIP_IF([test -z ${BASH_VERSION+x}])
 OVS_VSWITCHD_START
 
@@ -286,7 +286,7 @@ OVS_VSWITCHD_STOP
 AT_CLEANUP
 
 
-AT_SETUP([bash completion - negative test])
+AT_SETUP([appctl-bashcomp - negative test])
 AT_SKIP_IF([test -z ${BASH_VERSION+x}])
 OVS_VSWITCHD_START(add-port br0 p0 -- set Interface p0 type=dummy)
 
@@ -325,5 +325,107 @@ AT_CHECK_UNQUOTED([echo "$INPUT" | sed -e 's/[ \t]*$//' | sed -e '/./!d'],
 # negative test - do not match on nested option
 INPUT="$(bash ovs-appctl-bashcomp.bash debug ovsdb-tool create TAB 2>&1)"
 AT_CHECK_UNQUOTED([GET_AVAIL(${INPUT})], [0])
+
+AT_CLEANUP
+
+
+dnl ----------------------------------------------------------------------
+AT_BANNER([vsctl bashcomp unit tests])
+
+AT_SETUP([appctl-bashcomp - basic verification])
+AT_SKIP_IF([test -z ${BASH_VERSION+x}])
+OVS_VSWITCHD_START
+
+TMP="$(ovs-vsctl --commands | cut -d',' -f1-2 | tr -d ',[[]]' | tr -s ' ' '\n')
+$(ovs-vsctl --options | grep -- '--' | sed -e 's/=.*$/=/g')"
+MATCH=$(echo "${TMP}" | sort -u)
+
+# complete ovs-vsctl --db=* [TAB]
+AT_CHECK_UNQUOTED([ovs-vsctl-bashcomp.bash test "--db=unix:$OVS_RUNDIR/db.sock "],
+[0], [dnl
+${MATCH}
+])
+
+# complete ovs-vsctl [TAB]
+AT_CHECK_UNQUOTED([ovs-vsctl-bashcomp.bash test ""],
+[0], [dnl
+${MATCH}
+])
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+
+AT_SETUP([appctl-bashcomp - argument completion])
+AT_SKIP_IF([test -z ${BASH_VERSION+x}])
+OVS_VSWITCHD_START(
+   [add-br br1 -- \
+       set bridge br1 datapath-type=dummy -- \
+    add-br foo -- \
+       set bridge foo datapath-type=dummy -- \
+    add-br --weird-br_name -- \
+       set bridge --weird-br_name datapath-type=dummy -- \
+    add-port br0 br0p0 -- set Interface br0p0 type=dummy -- \
+    add-port br0 br0p1 -- set Interface br0p1 type=dummy -- \
+    add-port br1 br1p0 -- set Interface br1p0 type=dummy -- \
+    add-port br1 br1p1 -- set Interface br1p1 type=dummy -- \
+    add-port foo bar -- set Interface bar type=dummy ])
+
+# test completion functions defined in '_OVS_VSCTL_ARG_COMPLETION_FUNCS'.
+# therein, the different argument prefixes are also tested at the same time.
+
+# test: _ovs_vsctl_complete_table
+
+# test: _ovs_vsctl_complete_record
+
+# test: _ovs_vsctl_complete_bridge
+
+# test: _ovs_vsctl_complete_port
+
+# test: _ovs_vsctl_complete_key
+
+# test: _ovs_vsctl_complete_iface
+
+# test: _ovs_vsctl_complete_sysiface
+
+# test: _ovs_vsctl_complete_column
+
+# test: _ovs_vsctl_complete_column_optkey_value
+
+# test: _ovs_vsctl_complete_key_value
+
+# test: _ovs_vsctl_complete_filename
+
+# test: _ovs_vsctl_complete_bridge_fail_mode
+
+# test: _ovs_vsctl_complete_target
+
+# test: _ovs_vsctl_complete_new
+
+# test: _ovs_vsctl_complete_dashdash
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+
+AT_SETUP([appctl-bashcomp - negative test])
+AT_SKIP_IF([test -z ${BASH_VERSION+x}])
+OVS_VSWITCHD_START
+
+# break 253 index limit using *.
+
+# break 253 index limit using '--'.
+
+# complete ovs-vsctl --db=wrongdb [TAB]
+# should return 1 and show nothing.
+AT_CHECK_UNQUOTED([ovs-vsctl-bashcomp.bash test "--db=wrongdb"],
+[1], [dnl
+])
+
+OVS_VSWITCHD_STOP
+# delete ovsdb-server and try again.
+AT_CHECK_UNQUOTED([ovs-vsctl-bashcomp.bash test ""],
+[1], [dnl
+])
 
 AT_CLEANUP
