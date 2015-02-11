@@ -1,12 +1,17 @@
 SAVE_IFS=$IFS
 IFS="
 "
-_OVS_VSCTL_INVOCATION_OPTS=""
+_OVSDB_SERVER_LOCATION=""
 
-# Run ovs-vsctl with any needed invocation options useful for making
-# sure that ovs-vsctl is always called with the correct --db argument.
+# Run ovs-vsctl and make sure that ovs-vsctl is always called with
+# the correct --db argument.
 _ovs_vsctl () {
-    ovs-vsctl ${_OVS_VSCTL_INVOCATION_OPTS} "$@"
+    local _db
+
+    if [ -n "$_OVSDB_SERVER_LOCATION" ]; then
+        _db="--db=$_OVSDB_SERVER_LOCATION"
+    fi
+    ovs-vsctl ${_db} "$@"
 }
 
 # ovs-vsctl --commands outputs in this format:
@@ -35,6 +40,7 @@ _OVS_VSCTL_OPTIONS="$(_ovs_vsctl --options | awk '/^--/ { print $0 }' \
 IFS=$SAVE_IFS
 
 declare -A _OVS_VSCTL_PARSED_ARGS
+declare -A _OVS_VSCTL_NEW_RECORDS
 
 # This is a convenience function to make sure that user input is
 # looked at as a fixed string when being compared to something.  $1 is
@@ -48,6 +54,7 @@ _ovs_vsctl_check_startswith_string () {
 # Complete on global options.
 _ovs_vsctl_bashcomp_globalopt () {
     local options result
+
     options=""
     result=$(printf "%s\n" "${_OVS_VSCTL_OPTIONS}" \
              | _ovs_vsctl_check_startswith_string "${1%=*}")
@@ -131,17 +138,18 @@ _ovs_vsctl_expand_command () {
 _ovs_vsctl_complete_table () {
     local result
 
-    result=$(ovsdb-client --no-heading list-tables \
-             | _ovs_vsctl_check_startswith_string "$1")
+    result=$(ovsdb-client --no-heading list-tables $_OVSDB_SERVER_LOCATION Open_vSwitch \
+        | _ovs_vsctl_check_startswith_string "$1")
     printf -- "EO\n%s\n" "${result}"
 }
 
 # $1 = word to complete on.
-# Complete on record.
+# Complete on record.  Provide both the name and uuid.
 _ovs_vsctl_complete_record () {
-    local table uuids names
+    local table uuids names new_record
 
     table="${_OVS_VSCTL_PARSED_ARGS[TABLE]}"
+    new_record="${_OVS_VSCTL_NEW_RECORDS[${table^^}]}"
     # Tables should always have an _uuid column
     uuids=$(_ovs_vsctl --no-heading -f table -d bare --columns=_uuid \
                       list $table | _ovs_vsctl_check_startswith_string "$1")
@@ -151,7 +159,7 @@ _ovs_vsctl_complete_record () {
                       --columns=name list $table \
                       2>/dev/null \
             | _ovs_vsctl_check_startswith_string "$1")
-    printf -- "EO\n%s\n%s\n" "${uuids}" "${names}"
+    printf -- "EO\n%s\n%s\n%s\n" "${uuids}" "${names}" "${new_record}"
 }
 
 # $1 = word to complete on.
@@ -164,7 +172,8 @@ _ovs_vsctl_complete_bridge () {
 }
 
 # $1 = word to complete on.
-# Complete on port.
+# Complete on port.  If a bridge has already been specified,
+# just complete for that bridge.
 _ovs_vsctl_complete_port () {
     local ports result
 
@@ -176,7 +185,7 @@ _ovs_vsctl_complete_port () {
                               --no-headings \
                               --columns=name \
                               list Port)
-        ports=$(printf "$all_ports" | sort | tr -d '" ' | uniq -u)
+        ports=$(printf "$all_ports" | tr -d '" ' | sort -u)
     fi
     result=$(_ovs_vsctl_check_startswith_string "$1" <<< "$ports")
     printf -- "EO\n%s\n" "${result}"
@@ -198,6 +207,8 @@ _ovs_vsctl_complete_key_given_table_column () {
     printf -- "%s\n" "${result}"
 }
 
+# $1 = word to complete on.
+# Complete on key.
 _ovs_vsctl_complete_key () {
     # KEY is used in both br-set-external-id/br-get-external id (in
     # which case it is implicitly a key in the external-id column) and
@@ -217,14 +228,32 @@ _ovs_vsctl_complete_key () {
                            ${_OVS_VSCTL_PARSED_ARGS["BRIDGE"]} \
                  | cut -d'=' -f1 | _ovs_vsctl_check_startswith_string "$1")
     fi
+    # If result is empty, just use user input as result.
+    if [ -z "$result" ]; then
+        result=$1
+    fi
     printf -- "EO\n%s\n" "${result}"
 }
 
+# $1 = word to complete on.
+# Complete on value.
+_ovs_vsctl_complete_value () {
+    local result
+
+    # Just use user input as result.
+    if [ -z "$result" ]; then
+        result=$1
+    fi
+    printf -- "EO\n%s\n" "${result}"
+}
+
+
 _ovs_vsctl_complete_key_value () {
     local orig_completions new_completions
+
     orig_completions=$(_ovs_vsctl_complete_key "$1")
     for completion in ${orig_completions#*EO}; do
-        new_completions="${new_completions} ${completion}="
+        new_completions="${new_completions} ${completion}"
     done
     printf -- "NOSPACE\nEO\n%s" "${new_completions}"
 }
@@ -234,10 +263,10 @@ _ovs_vsctl_complete_key_value () {
 _ovs_vsctl_complete_column () {
     local columns result
 
-    columns=$(ovsdb-client --no-headings list-columns \
-                           ${_OVS_VSCTL_PARSED_ARGS["TABLE"]})
+    columns=$(ovsdb-client --no-headings list-columns $_OVSDB_SERVER_LOCATION \
+        Open_vSwitch ${_OVS_VSCTL_PARSED_ARGS["TABLE"]})
     result=$(printf "%s\n" "${columns}" \
-             | cut -d' ' -f1 \
+             | tr -d ':' | cut -d' ' -f1 \
              | _ovs_vsctl_check_startswith_string "$1" | sort | uniq)
     printf -- "EO\n%s\n" "${result}"
 }
@@ -245,6 +274,7 @@ _ovs_vsctl_complete_column () {
 # Extract all system interfaces.
 _ovs_vsctl_get_sys_intf () {
     local result
+
     case "$(uname -o)" in
         *Linux*)
             result=$(ip -o link 2>/dev/null | cut -d':' -f2 \
@@ -267,18 +297,26 @@ _ovs_vsctl_complete_sysiface () {
 }
 
 # $1 = word to complete on.
-# Complete on interface.
+# Complete on interface.  If a bridge has already been specified,
+# just complete for that bridge.
 _ovs_vsctl_complete_iface () {
-    local bridges result
-    bridges=$(_ovs_vsctl list-br)
-    for bridge in $bridges; do
-        local ifaces
-        ifaces=$(_ovs_vsctl list-ifaces "${bridge}")
-        result="${result} ${ifaces}"
-    done
+    local result
+
+    if [ -n "${_OVS_VSCTL_PARSED_ARGS[BRIDGE]}" ]; then
+        result=$(_ovs_vsctl list-ifaces "${_OVS_VSCTL_PARSED_ARGS[BRIDGE]}")
+    else
+        for bridge in `_ovs_vsctl list-br`; do
+            local ifaces
+
+            ifaces=$(_ovs_vsctl list-ifaces "${bridge}")
+            result="${result} ${ifaces}"
+        done
+    fi
     printf "EO\n%s\n" "${result}"
 }
 
+# $1 = word to complete on.
+# Complete on COLUMN?:KEY=VALUE.
 _ovs_vsctl_complete_column_optkey_value () {
     local result column key value completion
 
@@ -298,9 +336,10 @@ _ovs_vsctl_complete_column_optkey_value () {
             table="Port"
         fi
     fi
-
     if [ -z "$key" ]; then
-        local columns=$(ovsdb-client --no-headings list-columns $table)
+        local columns=$(ovsdb-client --no-headings list-columns \
+            $_OVSDB_SERVER_LOCATION Open_vSwitch $table)
+
         result=$(printf "%s\n" "${columns}" \
                  | awk '/key.*value/ { print $1":"; next }
                                      { print $1; next }' \
@@ -309,7 +348,10 @@ _ovs_vsctl_complete_column_optkey_value () {
     if [[ $1 =~ ":" ]]; then
         result=$(_ovs_vsctl_complete_key_given_table_column \
                      "$key" "$table" "$column" "$column:")
-
+    fi
+    # If result is empty, just use user input as result.
+    if [ -z "$result" ]; then
+        result=$1
     fi
     printf -- "NOSPACE\nEO\n%s\n" "${result}"
 }
@@ -334,6 +376,7 @@ _ovs_vsctl_complete_target () {
 
     if [[ "$1" =~ ^p?u ]]; then
         local protocol pathname expansion_base result
+
         protocol=$(cut -d':' -f1 <<< "$1")
         pathname=$(cut -s -d':' -f2 <<< "$1")
         expansion_base=$(compgen -W "unix punix" "$protocol")
@@ -372,9 +415,14 @@ _ovs_vsctl_get_PS1 () {
 _ovs_vsctl_complete_new () {
     local two_word_type message result
 
-    two_word_type="${2/-/ }"
-    message="\nEnter a ${two_word_type,,}:\n$(_ovs_vsctl_get_PS1)$COMP_LINE"
-    printf -- "NOCOMP\nBM%sEM\nEO\n%s\n" "${message}" "${result}"
+    if [ ! "$1" = "--" ]; then
+        two_word_type="${2/-/ }"
+        message="\nEnter a ${two_word_type,,}:\n$(_ovs_vsctl_get_PS1)$COMP_LINE"
+        if [ -n "$1" ]; then
+            result="$1"
+        fi
+        printf -- "NOCOMP\nBM%sEM\nEO\n%s\n" "${message}" "${result}"
+    fi
 }
 
 _ovs_vsctl_complete_dashdash () {
@@ -391,7 +439,6 @@ _ovs_vsctl_complete_dashdash () {
 #
 # There are a few argument types that are not completed:
 #
-# - VALUE: Values are likely to be unique.
 # - ARG: Can be any text
 #
 # Note that the NEW-* functions actually are ``completed''; currently
@@ -411,6 +458,7 @@ declare -A _OVS_VSCTL_ARG_COMPLETION_FUNCS=(
     ["PARENT"]=_ovs_vsctl_complete_bridge
     ["PORT"]=_ovs_vsctl_complete_port
     ["KEY"]=_ovs_vsctl_complete_key
+    ["VALUE"]=_ovs_vsctl_complete_value
     ["IFACE"]=_ovs_vsctl_complete_iface
     ["SYSIFACE"]=_ovs_vsctl_complete_sysiface
     ["COLUMN"]=_ovs_vsctl_complete_column
@@ -424,7 +472,7 @@ declare -A _OVS_VSCTL_ARG_COMPLETION_FUNCS=(
     ["MODE"]=_ovs_vsctl_complete_bridge_fail_mode
     ["TARGET"]=_ovs_vsctl_complete_target
     ["NEW-BRIDGE"]=_ovs_vsctl_complete_new
-    ["NEW-PORT"]=_ovs_vsctl_complete_sysiface
+    ["NEW-PORT"]=_ovs_vsctl_complete_new
     ["NEW-BOND-PORT"]=_ovs_vsctl_complete_new
     ["NEW-VLAN"]=_ovs_vsctl_complete_new
     ["--"]=_ovs_vsctl_complete_dashdash
@@ -585,7 +633,7 @@ _ovs_vsctl_bashcomp () {
     # Extract the conf.db path.
     db=$(sed -n 's/.*--db=\([^ ]*\).*/\1/p' <<< "$COMP_LINE")
     if [ -n "$db" ]; then
-        _OVS_VSCTL_INVOCATION_OPTS="--db=$db"
+        _OVSDB_SERVER_LOCATION="$db"
     fi
 
     # If having trouble accessing the database, return.
@@ -594,6 +642,7 @@ _ovs_vsctl_bashcomp () {
     fi
 
     _OVS_VSCTL_PARSED_ARGS=()
+    _OVS_VSCTL_NEW_RECORDS=()
     cmd_pos=-1
     cur=${COMP_WORDS[COMP_CWORD]}
     valid_globals=true
@@ -607,30 +656,40 @@ _ovs_vsctl_bashcomp () {
         local completion
         completion=""
         if [ $cmd_pos -gt -1 ]; then
-            local tmp tmp_nospace arg possible_newindex
+            local tmp tmp_noop arg possible_newindex
             tmp=$(_ovs_vsctl_complete_argument "$raw_cmd" "$cmd_pos" "$word")
             possible_newindex=$?
-            # Check for nospace
+            # Check for nospace.
             _ovs_vsctl_detect_nospace $tmp
-            # Remove all options
-            tmp_nospace="${tmp#*EO}"
+            # Remove all options.
+            tmp_noop="${tmp#*EO}"
 
             # Allow commands to specify that they should not be
             # completed
             if ! [[ $tmp =~ ^([^E]|E[^O])*NOCOMP ]]; then
-                completion="${completion} ${tmp_nospace}"
+                completion="$tmp_noop"
+                # If intermediate completion is empty, it means that the current
+                # argument is invalid.  And we should not continue.
+                if [ $index -lt $COMP_CWORD ] \
+                    && (! _ovs_vsctl_detect_nonzero_completions "$completion"); then
+                    return 1
+                fi
             else
                 # Only allow messages when there is no completion
                 # printout and when on the current word.
                 if [ $index -eq $COMP_CWORD ]; then
                     _ovs_vsctl_process_messages "${tmp}"
                 fi
+                # Append the new record to _OVS_VSCTL_NEW_RECORDS.
+                _OVS_VSCTL_NEW_RECORDS["${cmd_args[$cmd_pos]##*-}"]="${_OVS_VSCTL_NEW_RECORDS["${cmd_args[$cmd_pos]##*-}"]} $tmp_noop"
             fi
             if [[ $cmd_pos -lt ${#cmd_args} ]]; then
                 _OVS_VSCTL_PARSED_ARGS["${cmd_args[$cmd_pos]:1}"]=$word
             fi
             if [ $possible_newindex -lt 254 ]; then
                 cmd_pos=$possible_newindex
+            else
+                return 0
             fi
         fi
 
@@ -664,25 +723,24 @@ _ovs_vsctl_bashcomp () {
             fi
         fi
         if [ "$word" = "--" ] && [ $index -lt $COMP_CWORD ]; then
+            # Empty the parsed args array.
             _OVS_VSCTL_PARSED_AGS=()
             cmd_pos=-1
-            valid_globals=true
+            # No longer allow global options after '--'.
+            valid_globals=false
             valid_opts=true
             valid_commands=true
             given_opts=""
         fi
-        completion="$(sort <<< "$(tr ' ' '\n' <<< ${completion})")"
+        completion="$(sort -u <<< "$(tr ' ' '\n' <<< ${completion})")"
         if [ $index -eq $COMP_CWORD ]; then
             if [ "$test" = "true" ]; then
                 if [ "${_OVS_VSCTL_COMP_NOSPACE}" = "true" ]; then
-                    for comp in $completion; do
-                        printf "%s\n" "$comp"
-                    done
+                    printf "%s" "$completion" | sed -e '/^$/d'
                 else
-                    for comp in $completion; do
-                        printf "%s \n" "$comp"
-                    done
+                    printf "%s" "$completion" | sed -e '/^$/d; s/$/ /g'
                 fi
+                printf "\n"
             else
                 if [ "${_OVS_VSCTL_COMP_NOSPACE}" = "true" ]; then
                     compopt -o nospace
@@ -693,7 +751,6 @@ _ovs_vsctl_bashcomp () {
                 fi
             fi
         fi
-        #COMPREPLY=( $(compgen -W "${completion}" -- $word) )
         index=$(($index+1))
     done
 }
