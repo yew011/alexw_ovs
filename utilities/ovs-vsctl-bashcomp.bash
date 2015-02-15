@@ -209,7 +209,7 @@ _ovs_vsctl_complete_key_given_table_column () {
 
 # $1 = word to complete on.
 # Complete on key.
-_ovs_vsctl_complete_key () {
+__complete_key () {
     # KEY is used in both br-set-external-id/br-get-external id (in
     # which case it is implicitly a key in the external-id column) and
     # in remove, where it is a table key.  This checks to see if table
@@ -228,6 +228,19 @@ _ovs_vsctl_complete_key () {
                            ${_OVS_VSCTL_PARSED_ARGS["BRIDGE"]} \
                  | cut -d'=' -f1 | _ovs_vsctl_check_startswith_string "$1")
     fi
+    printf -- "%s" "${result}"
+}
+
+# $1 = word to complete on.
+# Complete on key.
+_ovs_vsctl_complete_key () {
+    # KEY is used in both br-set-external-id/br-get-external id (in
+    # which case it is implicitly a key in the external-id column) and
+    # in remove, where it is a table key.  This checks to see if table
+    # is set (the remove scenario), and then decides what to do.
+    local result
+
+    result="$(__complete_key $1)"
     # If result is empty, just use user input as result.
     if [ -z "$result" ]; then
         result=$1
@@ -247,14 +260,19 @@ _ovs_vsctl_complete_value () {
     printf -- "EO\n%s\n" "${result}"
 }
 
-
+# $1 = word to complete on.
+# Complete on key=value.
 _ovs_vsctl_complete_key_value () {
     local orig_completions new_completions
 
-    orig_completions=$(_ovs_vsctl_complete_key "$1")
+    orig_completions=$(__complete_key "$1")
     for completion in ${orig_completions#*EO}; do
-        new_completions="${new_completions} ${completion}"
+        new_completions="${new_completions} ${completion}="
     done
+    # If 'new_completions' is empty, just use user input as result.
+    if [ -z "$new_completions" ]; then
+        new_completions=$1
+    fi
     printf -- "NOSPACE\nEO\n%s" "${new_completions}"
 }
 
@@ -305,7 +323,7 @@ _ovs_vsctl_complete_iface () {
     if [ -n "${_OVS_VSCTL_PARSED_ARGS[BRIDGE]}" ]; then
         result=$(_ovs_vsctl list-ifaces "${_OVS_VSCTL_PARSED_ARGS[BRIDGE]}")
     else
-        for bridge in `_ovs_vsctl list-br`; do
+        for bridge in $(_ovs_vsctl list-br); do
             local ifaces
 
             ifaces=$(_ovs_vsctl list-ifaces "${bridge}")
@@ -437,10 +455,6 @@ _ovs_vsctl_complete_dashdash () {
 # $2 is the type of completion --- only currently useful for the
 # NEW-* functions.
 #
-# There are a few argument types that are not completed:
-#
-# - ARG: Can be any text
-#
 # Note that the NEW-* functions actually are ``completed''; currently
 # the completions are just used to save the fact that they have
 # appeared for later use (i.e. implicit table calculation).
@@ -459,6 +473,7 @@ declare -A _OVS_VSCTL_ARG_COMPLETION_FUNCS=(
     ["PORT"]=_ovs_vsctl_complete_port
     ["KEY"]=_ovs_vsctl_complete_key
     ["VALUE"]=_ovs_vsctl_complete_value
+    ["ARG"]=_ovs_vsctl_complete_value
     ["IFACE"]=_ovs_vsctl_complete_iface
     ["SYSIFACE"]=_ovs_vsctl_complete_sysiface
     ["COLUMN"]=_ovs_vsctl_complete_column
@@ -667,11 +682,14 @@ _ovs_vsctl_bashcomp () {
             # Allow commands to specify that they should not be
             # completed
             if ! [[ $tmp =~ ^([^E]|E[^O])*NOCOMP ]]; then
+                # Directly assignment, since 'completion' is guaranteed to
+                # to be empty.
                 completion="$tmp_noop"
                 # If intermediate completion is empty, it means that the current
                 # argument is invalid.  And we should not continue.
                 if [ $index -lt $COMP_CWORD ] \
                     && (! _ovs_vsctl_detect_nonzero_completions "$completion"); then
+                    printf "\nCannot complete \'${COMP_WORDS[$index]}\' at index ${index}:\n$(_ovs_vsctl_get_PS1)$COMP_LINE"
                     return 1
                 fi
             else
@@ -688,8 +706,6 @@ _ovs_vsctl_bashcomp () {
             fi
             if [ $possible_newindex -lt 254 ]; then
                 cmd_pos=$possible_newindex
-            else
-                return 0
             fi
         fi
 
